@@ -1,0 +1,57 @@
+# DEVELOPMENT setup — run once, edit code on the host, changes reflect automatically.
+#   docker compose -f container/main/compose.dev.yaml up --build
+#
+# How it works: your source is bind-mounted into the container. A file watcher
+# recompiles on every change, and Spring Boot DevTools hot-restarts the app (~1s).
+# No image rebuild and no container restart needed while you code.
+services:
+  catalog-ms-dev:
+    build:
+      context: ../../source/main
+      dockerfile: ../../container/main/Dockerfile.dev
+    image: catalog-ms-dev:latest
+    working_dir: /workspace
+    volumes:
+      # Live-mount the project from the host into the container
+      - ../../source/main:/workspace
+    ports:
+      - "7171:8080"      # the app (host 7171 -> container 8080)
+      - "35729:35729"    # DevTools LiveReload (for browser auto-refresh; optional)
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/catalog_ms_db
+      SPRING_DATASOURCE_USERNAME: catalog
+      SPRING_DATASOURCE_PASSWORD: catalog
+      # JWT signing secret (HS256, >= 32 chars). Override for anything beyond local use.
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me-please-32+chars-secret-key}
+    command:
+      - bash
+      - -c
+      - |
+        mvn spring-boot:run &
+        echo ">>> watching src for changes (edit on the host, it reloads here)..."
+        while inotifywait -qq -r -e modify,create,delete,move /workspace/src; do
+          echo ">>> change detected — recompiling"
+          mvn -q compile
+        done
+
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: catalog_ms_db
+      POSTGRES_USER: catalog
+      POSTGRES_PASSWORD: catalog
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"      # published for DB clients in dev (change host side if 5432 is taken)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U catalog -d catalog_ms_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
